@@ -23,7 +23,7 @@
 
 # COMMAND ----------
 
-# %run por todos os demais — reiniciar o Python apagaria variáveis do notebook pai (quebraria o nb_05_master).
+# %run por todos os demais notebooks
 
 from datetime import datetime
 import requests
@@ -46,13 +46,13 @@ MOEDAS_ALVO = ["BRL", "EUR", "GBP", "JPY", "MXN", "CAD", "AUD", "CHF", "CNY", "I
 # ──────────────────────────────────────────────────────────────────────────
 # 3) THRESHOLD do SCD2
 # ──────────────────────────────────────────────────────────────────────────
-THRESHOLD_CAMBIAL = 2.0  # % — variação mínima para gerar nova versão na dim_moeda_cambio
+THRESHOLD_CAMBIAL = 2.0  # % — variação mínima para gerar nova versão na dim_moeda_cambio que será usada na silver
 
 # ──────────────────────────────────────────────────────────────────────────
 # 4) FONTES
 # ──────────────────────────────────────────────────────────────────────────
 API_EXCHANGE_LATEST = "https://open.er-api.com/v6/latest/{base}"   # snapshot atual
-CSV_HISTORICO       = "https://raw.githubusercontent.com/datasets/exchange-rates/main/data/daily.csv"  # Fed H.10
+CSV_HISTORICO = "https://raw.githubusercontent.com/datasets/exchange-rates/main/data/daily.csv"  # Fed H.10, historico
 
 # Mapa País (dataset Fed H.10) → código ISO da moeda
 PAIS_PARA_MOEDA = {
@@ -89,7 +89,7 @@ def create_schemas():
         spark.sql(f"CREATE SCHEMA IF NOT EXISTS {s}")
         log("schema", f"Schema OK: {s}")
 
-def assert_not_empty(df, name: str):
+def assert_not_empty(df, name: str): # trava o pipeline se uma tabela vier vazia
     c = df.count()
     assert c > 0, f"[ERRO] {name} está vazio!"
     log("validate", f"{name} OK", c)
