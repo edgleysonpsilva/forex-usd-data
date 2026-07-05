@@ -22,19 +22,19 @@ def preparar_src(raw_atual_df):
     """Snapshot mais recente por moeda, vs. USD (a dimensão é sempre expressa em USD)."""
     return (
         raw_atual_df
-        .filter(F.col("base_moeda") == "USD")
+        .filter(F.col("base_moeda") == "USD") # dimensao sempre em USD
         .select("moeda_codigo", "taxa_usd", "base_moeda",
                 F.try_to_timestamp("data_ref").cast("date").alias("data_ref"))
         .filter(F.col("data_ref").isNotNull())
-        .dropDuplicates(["moeda_codigo"])
+        .dropDuplicates(["moeda_codigo"]) # uma linha por moeda
     )
 
 def aplicar_scd2(src_df, tgt_table: str, threshold_pct: float = THRESHOLD_CAMBIAL):
     """SCD Tipo 2 com threshold — função pura, reutilizável em produção e em testes."""
     src = (
         src_df
-        .withColumn("eff_start", F.current_date())
-        .withColumn("eff_end", F.lit("9999-12-31").cast("date"))
+        .withColumn("eff_start", F.current_date()) # inicio da validade
+        .withColumn("eff_end", F.lit("9999-12-31").cast("date")) # fim 'infinito'
         .withColumn("is_current", F.lit(True))
     )
 
@@ -49,10 +49,10 @@ def aplicar_scd2(src_df, tgt_table: str, threshold_pct: float = THRESHOLD_CAMBIA
         src.alias("s").join(existing.alias("old"), on="moeda_codigo", how="inner")
         .withColumn("variacao_pct",
             F.abs((F.col("s.taxa_usd") - F.col("old.taxa_usd")) / F.col("old.taxa_usd") * 100))
-        .filter(F.col("variacao_pct") > threshold_pct)
+        .filter(F.col("variacao_pct") > threshold_pct) # só mudanças maiores que 2%
     )
 
-    # Materializa (corta linhagem) ANTES do MERGE — evita releitura da própria tabela alvo
+    # Materializa ANTES do MERGE para evitar releitura da própria tabela alvo
     novas = (
         with_old.select("moeda_codigo", F.col("s.taxa_usd").alias("taxa_usd"), "s.base_moeda",
                          "s.data_ref", "s.eff_start", "s.eff_end", "s.is_current")

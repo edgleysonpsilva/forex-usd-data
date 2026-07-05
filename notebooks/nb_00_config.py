@@ -14,12 +14,6 @@
 # MAGIC 11 moedas com histórico real no Fed H.10: majors (EUR, JPY, GBP, CHF), Ásia (CNY, INR, KRW),
 # MAGIC commodity currencies (CAD, AUD) e LatAm (BRL, MXN).
 # MAGIC
-# MAGIC ### ⚠️ Restrição de rede do Free Serverless
-# MAGIC O egress resolve DNS só para uma allowlist mínima. Para câmbio, apenas `open.er-api.com` e o GitHub
-# MAGIC (`raw.githubusercontent.com` / `api.github.com`) respondem. Frankfurter, jsdelivr, Cloudflare,
-# MAGIC exchangerate.host, currencyapi, fixer, openexchangerates → **DNS FAIL**. Por isso o histórico vem do CSV
-# MAGIC oficial do Fed hospedado no GitHub — dado real, diário, sem depender de CDN.
-# MAGIC
 
 # COMMAND ----------
 

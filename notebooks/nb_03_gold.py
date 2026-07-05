@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 📈 Projeto 09 — Financeiro | nb_03_gold
 # MAGIC Tabelas: `variacao_cambial_30d`, `ranking_desvalorizacao`, `alertas_cambiais_brl`, `correlacao_moedas`
@@ -17,7 +21,7 @@ log("gold", "Iniciando Gold")
 fato = spark.table(f"{SILVER}.fato_taxas_historico")
 assert_not_empty(fato, "fato_taxas_historico")
 
-# Window function LAG — variação diária 
+# Window function LAG para variação diária 
 w_moeda = Window.partitionBy("moeda_codigo").orderBy("data")
 fato_var = (
     fato
@@ -28,7 +32,7 @@ fato_var = (
 )
 
 # ── Gold 1 — Variação agregada 30d  ────────────────────────────
-# taxa_atual = valor do último dia (não o primeiro): usa last() na janela ordenada
+# taxa_atual = valor do último dia: usa last() na janela ordenada
 w_ult = Window.partitionBy("moeda_codigo").orderBy(F.desc("data"))
 variacao = (
     fato_var
@@ -72,7 +76,6 @@ alertas = (
 log("gold", f"alertas_cambiais_brl salvo ({alertas.count()} alertas)")
 
 # ── Gold 4 — Correlação entre moedas  ──
-# Correlação de Pearson das variações diárias de cada moeda vs. o BRL.
 # Substitui a API de commodities (bloqueada por DNS no Free) por correlação intra-dataset.
 base_brl = (fato_var.filter("moeda_codigo='BRL'")
             .select(F.col("data"), F.col("variacao_diaria_pct").alias("var_brl")))

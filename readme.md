@@ -12,7 +12,7 @@
 
 ---
 
-## 🎯 Em resumo
+## Em resumo
 
 Este projeto pega dados de câmbio de fontes públicas, refina em camadas de qualidade crescente e serve o resultado para dashboards e automações. Nada revolucionário no *tema* — o valor está em **como** foi construído: modelagem dimensional, window functions, idempotência, gestão de segredos e, principalmente, **decisões de engenharia para contornar as limitações de um ambiente gratuito com rede restrita**.
 
@@ -26,7 +26,7 @@ Spoiler: metade do aprendizado aqui foi descobrir o que *não* funciona no Datab
 
 ---
 
-## 🛠️ Soluções principais
+## Soluções principais
 
 | Desafio | Solução |
 |---|---|
@@ -39,7 +39,7 @@ Spoiler: metade do aprendizado aqui foi descobrir o que *não* funciona no Datab
 
 ---
 
-## 📈 Resultados
+## Resultados
 
 O pipeline não só roda — produz insights **coerentes com a realidade econômica**, o que serve de validação:
 
@@ -55,7 +55,7 @@ O pipeline não só roda — produz insights **coerentes com a realidade econôm
 
 ---
 
-## 🗺️ Arquitetura
+## Arquitetura
 
 ```
    FONTES              INGESTÃO           REFINO            MÉTRICAS          ENTREGA
@@ -87,22 +87,24 @@ O pipeline não só roda — produz insights **coerentes com a realidade econôm
 
 ---
 
-## 🚀 Como rodar
+## Como rodar
 
-1. Importe os notebooks (`nb_00` a `nb_05`) num workspace Databricks
+1. Importe a pasta `notebooks/` (`nb_00` a `nb_05`) num workspace Databricks
 2. Configure o secret da senha do Supabase:
-   ```bash
+```bash
    databricks secrets put --scope infisical --key postgres_password --string-value "SUA_SENHA"
-   ```
+```
 3. Rode o `nb_05_master` — ele executa todo o pipeline em sequência
 4. Confira as tabelas no SQL Editor do Supabase
 
-> **Stack:** Databricks Free Serverless · PySpark · Delta Lake · SQL · Supabase (PostgreSQL)
+> **Rodando localmente (fora do Databricks):** instale as dependências com `pip install -r requirements.txt`. Note que isso cobre `pyspark` e `delta-spark` para testes locais — no Databricks Free essas bibliotecas já vêm prontas no runtime, então esse passo só é necessário se você quiser rodar partes do pipeline fora da plataforma.
+
+> **Stack:** Databricks Free· PySpark · Delta Lake · SQL · Supabase (PostgreSQL)
 
 ---
 
 <details>
-<summary><h2>🔬 A história técnica (para quem quer aprofundar)</h2></summary>
+<summary><h2> A história técnica (para quem quer aprofundar)</h2></summary>
 
 Aqui é onde o projeto fica interessante de verdade. O tema (câmbio) é só o pano de fundo — o aprendizado real veio de **bater de frente com as limitações do Databricks Free Serverless** e engenheirar soluções. Segue a jornada honesta, com os becos sem saída incluídos.
 
@@ -160,32 +162,36 @@ O desafio original pedia uma correlação BRL × commodities via API externa —
 
 ---
 
-## 📂 Estrutura do repositório
+## Estrutura do repositório
 
 ```
 .
-├── nb_00_config.py          # configuração central
-├── nb_01_bronze.py          # ingestão (snapshot + histórico Fed)
-├── nb_02_silver.py          # SCD2 + fato
-├── nb_03_gold.py            # métricas (LAG, RANK, correlação)
-├── nb_04_data_serving.py    # export → Supabase
-├── nb_05_master.py          # orquestração
-├── docs/                    # documentação detalhada (HTML)
+├── assets/
+│   └── architecture.png     # diagrama da arquitetura
+├── notebooks/
+│   ├── nb_00_config.py      # configuração central
+│   ├── nb_01_bronze.py      # ingestão (snapshot + histórico Fed)
+│   ├── nb_02_silver.py      # SCD2 + fato
+│   ├── nb_03_gold.py        # métricas (LAG, RANK, correlação)
+│   ├── nb_04_data_serving.py # export → Supabase
+│   └── nb_05_master.py      # orquestração
+├── requirements.txt
+├── LICENSE
 └── README.md
 ```
 
 ---
 
-## 👣 Próximos Passos
+## Próximos Passos
 
 - [ ] **Dashboard** de visualização (Metabase) conectado ao Supabase
 - [ ] **Notificação diária** por e-mail (GitHub Actions cron + Resend) lendo o data mart
-- [ ] Expandir a janela histórica para correlações mais robustas
+- [ ] **Expandir a janela histórica** para correlações mais robustas
 
 ---
 
-## 📝 Notas
+## Notas
 
-- Ambiente: **Databricks Free Serverless** (com todas as suas limitações — que viraram parte da graça)
+- Ambiente: **Databricks Free**
 - Dados históricos: **Federal Reserve H.10** (fonte oficial, domínio público)
 - Este é um projeto de **portfólio** — foco em boas práticas de engenharia, não em complexidade artificial

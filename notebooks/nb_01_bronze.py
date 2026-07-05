@@ -114,12 +114,12 @@ bronze_hist = f"{BRONZE}.taxas_historico_raw"
 if rows_hist:
     df_hist = (
         spark.createDataFrame(rows_hist)
-        .withColumn("ano_mes", F.date_format("data_ref", "yyyy-MM"))    #  — coluna ano_mes
+        .withColumn("ano_mes", F.date_format("data_ref", "yyyy-MM"))    #  coluna ano_mes
         .withColumn("_ingested_at", F.current_timestamp())
         .withColumn("_pipeline_run", F.lit(run_id))
         .withColumn("_origem_dados", F.lit("REAL_fedH10_datahub"))
     )
-    (df_hist.write.format("delta").mode("overwrite")                    # — partition ano_mes
+    (df_hist.write.format("delta").mode("overwrite")                    # partition ano_mes
         .option("overwriteSchema", "true")
         .partitionBy("ano_mes")
         .saveAsTable(bronze_hist))

@@ -1,0 +1,11 @@
+# Pipeline de Dados Cambiais — dependências de terceiros
+# (módulos da stdlib como datetime, csv, io e uuid não entram aqui)
+
+# HTTP — coleta das APIs de câmbio (open.er-api.com, Fed H.10 via GitHub)
+requests==2.32.3
+
+# PySpark — transformações Bronze/Silver/Gold
+pyspark==3.5.1
+
+# Delta Lake — DeltaTable, MERGE (SCD2 e fato incremental)
+delta-spark==3.2.0

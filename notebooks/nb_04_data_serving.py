@@ -26,7 +26,7 @@ def exportar_postgres(df, tabela) -> bool:
     try:
         (df.coalesce(1).write.format("postgresql")           # coalesce(1): 1 partição só
             .option("host", "aws-1-ca-central-1.pooler.supabase.com")
-            .option("port", "5432")                          # ← SESSION mode (era 6543)
+            .option("port", "5432")                          # ← SESSION mode 
             .option("database", "postgres")
             .option("dbtable", tabela)
             .option("user", "postgres.gqurwswkaojrgqhcyfrq")
