@@ -181,3 +181,48 @@ for h in hosts:
         print(f"  ✅ {h:28} → {socket.gethostbyname(h)}")
     except Exception as e:
         print(f"  ❌ {h:28} → {type(e).__name__}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 🔎 Diagnóstico de da API
+
+# COMMAND ----------
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 🩺 Diagnóstico — fonte travada ou pipeline não executou?
+
+# COMMAND ----------
+
+import csv, io
+
+# 1) Data mais recente disponível AGORA no CSV bruto do Fed H.10 (direto da fonte)
+resp_diag = HTTP.get(CSV_HISTORICO, timeout=60)
+resp_diag.raise_for_status()
+reader_diag = csv.DictReader(io.StringIO(resp_diag.text))
+datas_fonte = sorted({row["Date"] for row in reader_diag if row.get("Date")})
+ultima_data_fonte = datas_fonte[-1] if datas_fonte else None
+
+# 2) O que já está gravado na tabela (última data + última execução)
+row_tabela = spark.sql(f"""
+    SELECT MAX(data_ref) AS ultima_data_tabela,
+           MAX(_ingested_at) AS ultima_execucao
+    FROM {BRONZE}.taxas_historico_raw
+""").collect()[0]
+
+ultima_data_tabela = row_tabela["ultima_data_tabela"]
+ultima_execucao    = row_tabela["ultima_execucao"]
+
+print(f"📡 Última data disponível na FONTE (CSV agora)  : {ultima_data_fonte}")
+print(f"🗄️  Última data já GRAVADA na tabela              : {ultima_data_tabela}")
+print(f"🕒 Última vez que o pipeline ESCREVEU na tabela   : {ultima_execucao}")
+print()
+
+if ultima_data_fonte == ultima_data_tabela:
+    print("✅ Diagnóstico: a fonte (Fed H.10 / GitHub) está travada nessa data.")
+    print("   Não é um problema do seu pipeline — o CSV upstream ainda não tem dado mais novo.")
+else:
+    print("⚠️ Diagnóstico: a fonte JÁ tem uma data mais nova do que a gravada na tabela.")
+    print("   O pipeline não está pegando o dado novo — vale investigar a execução (log, erros, cache).")

@@ -34,6 +34,7 @@ Spoiler: metade do aprendizado aqui foi descobrir o que *não* funciona no Datab
 | Desafio | Solução |
 |---|---|
 | API de câmbio original (Frankfurter) **bloqueada por DNS** no Free | Migração para o dataset oficial do **Federal Reserve H.10** hospedado no GitHub (acessível) |
+| **Fonte histórica sem SLA** — Fed H.10/GitHub pode ficar dias sem atualizar | Célula de diagnóstico que compara a data mais recente na fonte vs. na tabela, isolando "pipeline parado" de "fonte desatualizada" |
 | Necessidade de **histórico versionado** das taxas | **SCD Tipo 2 com threshold** — só versiona variações > 2%, evitando inflar a dimensão |
 | Cálculo de **variação temporal** sem gambiarra | **Window functions** (`LAG`, `RANK`, `ROW_NUMBER`) sobre a tabela fato |
 | **Reexecução** não pode duplicar dados | **MERGE idempotente** (upsert por chave) no fato e na dimensão |
@@ -42,21 +43,79 @@ Spoiler: metade do aprendizado aqui foi descobrir o que *não* funciona no Datab
 
 ---
 
-## Resultados
+## Alguns Resultados
 
-O pipeline não só roda — produz insights **coerentes com a realidade econômica**, o que serve de validação:
+Consultas rodadas direto no SQL Editor do Supabase, sobre a janela de 30 dias mais recente:
 
-| Moeda | Volatilidade | Interpretação |
-|---|---|---|
-| 🇧🇷 BRL | **0.85** (maior) | Real reflete o prêmio de risco emergente |
-| 🇰🇷 KRW | 0.76 | Won sensível a tensões na Ásia |
-| 🇲🇽 MXN | 0.54 | Peso mexicano, emergente |
-| ... | ... | ... |
-| 🇨🇳 CNY | **0.16** (menor) | Yuan é câmbio *administrado* pela China |
+### 📊 Ranking de Volatilidade
 
-> O CNY aparecer como o **menos volátil** e o BRL como o **mais volátil** é exatamente o que a teoria prevê — um bom *sanity check* de que os dados e cálculos estão corretos.
+```sql
+SELECT moeda_codigo, volatilidade, variacao_media_diaria
+FROM variacao_cambial_30d
+ORDER BY volatilidade DESC;
+```
+
+| Moeda | Volatilidade |
+|---|---|
+| 🇧🇷 BRL | **0.8511** (maior) |
+| 🇰🇷 KRW | 0.7606 |
+| 🇲🇽 MXN | 0.5407 |
+| 🇦🇺 AUD | 0.5269 |
+| 🇨🇭 CHF | 0.4576 |
+| 🇬🇧 GBP | 0.4306 |
+| 🇮🇳 INR | 0.4022 |
+| 🇪🇺 EUR | 0.3594 |
+| 🇨🇦 CAD | 0.2584 |
+| 🇯🇵 JPY | 0.1764 |
+| 🇨🇳 CNY | **0.1578** (menor) |
+
+**Interpretaçao:** BRL no topo e CNY na base é exatamente o que a teoria prevê — câmbio flutuante de emergente reage mais que um câmbio administrado pelo Estado chinês. Bom *sanity check* de que os dados e cálculos estão corretos.
+
+
+
+### 📈 Tendência — Quem Desvalorizou vs. Quem Valorizou
+
+```sql
+SELECT moeda_codigo, variacao_media_diaria,
+    CASE WHEN variacao_media_diaria > 0 THEN 'desvalorizou vs USD'
+         WHEN variacao_media_diaria < 0 THEN 'valorizou vs USD'
+         ELSE 'estável' END AS tendencia
+FROM variacao_cambial_30d
+ORDER BY variacao_media_diaria DESC;
+```
+
+**Interpretação:** BRL lidera a desvalorização (+0.126%/dia em média); AUD lidera a valorização (−0.1537%/dia) — e é justamente uma das 4 moedas mais voláteis do ranking acima. Confirma que volatilidade mede o *tamanho* do movimento, não a *direção*.
+
+
+### 🕒 Evolução Temporal (exemplo: BRL)
+
+```sql
+SELECT data, ROUND(taxa_usd::numeric, 4) AS taxa
+FROM fato_taxas_historico
+WHERE moeda_codigo = 'BRL'
+ORDER BY data;
+```
+
+**Interpretação:** a série diária do Real mostra a trajetória completa por trás do número agregado de volatilidade — útil para plotar em gráfico de linha e visualizar os pontos de inflexão que a média sozinha não conta.
+
+
+
+### ✅ Alertas Cambiais (BRL)
+
+```sql
+SELECT data, ROUND(taxa_usd::numeric, 4) AS taxa, variacao_diaria_pct
+FROM alertas_cambiais_brl
+ORDER BY data DESC;
+```
+
+```
+Success. No rows returned
+```
+
+**Interpretação:** mesmo sendo a moeda mais volátil do dataset, o BRL não teve nenhum dia de queda > 3% na janela analisada — a volatilidade veio de muitos movimentos moderados, não de um choque único. Uma tabela vazia, aqui, é o próprio resultado: o sistema de alerta confirma que o período foi turbulento, mas não catastrófico.
 
 ---
+
 
 ## Arquitetura
 
