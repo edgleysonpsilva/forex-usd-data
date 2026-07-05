@@ -11,6 +11,9 @@
 > Pipeline de engenharia de dados **end-to-end** que coleta cotações de câmbio reais, processa em arquitetura Medalhão (Bronze → Silver → Gold) e entrega métricas prontas para análise num banco PostgreSQL — tudo rodando no tier gratuito do Databricks.
 
 ---
+![Arquitetura do pipeline](assets/architecture.png)
+
+---
 
 ## Em resumo
 
