@@ -1,53 +1,53 @@
-# 📈 Pipeline de Dados Cambiais
+# 📈 Currency Exchange Data Pipeline
 
 ![Databricks](https://img.shields.io/badge/Databricks-Free_Serverless-FF3621?logo=databricks&logoColor=white)
 ![PySpark](https://img.shields.io/badge/PySpark-3.5-E25A1C?logo=apachespark&logoColor=white)
-![Delta Lake](https://img.shields.io/badge/Delta_Lake-Medalhão-00ADD8?logo=delta&logoColor=white)
+![Delta Lake](https://img.shields.io/badge/Delta_Lake-Medallion-00ADD8?logo=delta&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase&logoColor=white)
 ![SQL](https://img.shields.io/badge/SQL-Window_Functions-4169E1?logo=postgresql&logoColor=white)
-![Status](https://img.shields.io/badge/status-concluído-2ea44f)
+![Status](https://img.shields.io/badge/status-completed-2ea44f)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-> Pipeline de engenharia de dados **end-to-end** que coleta cotações de câmbio reais, processa em arquitetura Medalhão (Bronze → Silver → Gold) e entrega métricas prontas para análise num banco PostgreSQL — tudo rodando no tier gratuito do Databricks.
+> **End-to-end** data engineering pipeline that collects real exchange rate quotes, processes them through a Medallion architecture (Bronze → Silver → Gold), and delivers analysis-ready metrics to a PostgreSQL database — all running on Databricks' free tier.
 
 ---
-![Arquitetura do pipeline](assets/architecture.png)
-
----
-
-## Em resumo
-
-Este projeto pega dados de câmbio de fontes públicas, refina em camadas de qualidade crescente e serve o resultado para dashboards e automações. Nada revolucionário no *tema* — o valor está em **como** foi construído: modelagem dimensional, window functions, idempotência, gestão de segredos e, principalmente, **decisões de engenharia para contornar as limitações de um ambiente gratuito com rede restrita**.
-
-Spoiler: metade do aprendizado aqui foi descobrir o que *não* funciona no Databricks Free e engenheirar em cima disso. Está tudo documentado abaixo.
-
-### O que ele entrega
-- 📊 **11 moedas** rastreadas (BRL, EUR, GBP, JPY, MXN, CAD, AUD, CHF, CNY, INR, KRW) com **dados reais** do Federal Reserve
-- 🥇 **Métricas de negócio**: variação diária, volatilidade, ranking de desvalorização, correlação entre moedas e alertas de queda
-- 🗄️ **4 tabelas servidas** num PostgreSQL (Supabase), prontas para BI
-- ⚙️ **Pipeline orquestrado** — roda de ponta a ponta com um clique
+![Pipeline architecture](assets/pipeline.png)
 
 ---
 
-## Soluções principais
+## In a nutshell
 
-| Desafio | Solução |
+This project pulls exchange rate data from public sources, refines it through progressively higher-quality layers, and serves the result to dashboards and automations. The *subject matter* isn't groundbreaking — the value lies in **how** it was built: dimensional modeling, window functions, idempotency, secrets management, and above all, **engineering decisions to work around the constraints of a free, network-restricted environment**.
+
+Spoiler: half the learning here came from discovering what *doesn't* work on Databricks Free and engineering around it. It's all documented below.
+
+### What it delivers
+- 📊 **11 currencies** tracked (BRL, EUR, GBP, JPY, MXN, CAD, AUD, CHF, CNY, INR, KRW) with **real data** from the Federal Reserve
+- 🥇 **Business metrics**: daily variation, volatility, devaluation ranking, cross-currency correlation, and drop alerts
+- 🗄️ **4 tables served** to PostgreSQL (Supabase), ready for BI
+- ⚙️ **Orchestrated pipeline** — runs end-to-end with a single click
+
+---
+
+## Key solutions
+
+| Challenge | Solution |
 |---|---|
-| API de câmbio original (Frankfurter) **bloqueada por DNS** no Free | Migração para o dataset oficial do **Federal Reserve H.10** hospedado no GitHub (acessível) |
-| **Fonte histórica sem SLA** — Fed H.10/GitHub pode ficar dias sem atualizar | Célula de diagnóstico que compara a data mais recente na fonte vs. na tabela, isolando "pipeline parado" de "fonte desatualizada" |
-| Necessidade de **histórico versionado** das taxas | **SCD Tipo 2 com threshold** — só versiona variações > 2%, evitando inflar a dimensão |
-| Cálculo de **variação temporal** sem gambiarra | **Window functions** (`LAG`, `RANK`, `ROW_NUMBER`) sobre a tabela fato |
-| **Reexecução** não pode duplicar dados | **MERGE idempotente** (upsert por chave) no fato e na dimensão |
-| Escrita no Supabase **bloqueada** (JDBC + conexão direta) | Conector nativo `postgresql` via **Connection Pooler (Session mode)** |
-| **Credenciais** fora do código | Senha no **Databricks Secrets**, lida em runtime |
+| Original exchange rate API (Frankfurter) **blocked by DNS** on the Free tier | Migrated to the official **Federal Reserve H.10** dataset hosted on GitHub (reachable) |
+| **Historical source with no SLA** — Fed H.10/GitHub can go days without updating | Diagnostic cell comparing the latest date in the source vs. the table, isolating a "stalled pipeline" from a "stale source" |
+| Need for **versioned history** of exchange rates | **SCD Type 2 with threshold** — only versions changes > 2%, preventing dimension bloat |
+| Calculating **time-based variation** without workarounds | **Window functions** (`LAG`, `RANK`, `ROW_NUMBER`) over the fact table |
+| **Re-runs** must not duplicate data | **Idempotent MERGE** (key-based upsert) on both the fact and dimension tables |
+| Writing to Supabase **blocked** (JDBC + direct connection) | Native `postgresql` connector via **Connection Pooler (Session mode)** |
+| **Credentials** kept out of the code | Password stored in **Databricks Secrets**, read at runtime |
 
 ---
 
-## Alguns Resultados
+## Sample Results
 
-Consultas rodadas direto no SQL Editor do Supabase, sobre a janela de 30 dias mais recente:
+Queries run directly in the Supabase SQL Editor, over the most recent 30-day window:
 
-### 📊 Ranking de Volatilidade
+### 📊 Volatility Ranking
 
 ```sql
 SELECT moeda_codigo, volatilidade, variacao_media_diaria
@@ -55,9 +55,9 @@ FROM variacao_cambial_30d
 ORDER BY volatilidade DESC;
 ```
 
-| Moeda | Volatilidade |
+| Currency | Volatility |
 |---|---|
-| 🇧🇷 BRL | **0.8511** (maior) |
+| 🇧🇷 BRL | **0.8511** (highest) |
 | 🇰🇷 KRW | 0.7606 |
 | 🇲🇽 MXN | 0.5407 |
 | 🇦🇺 AUD | 0.5269 |
@@ -67,27 +67,24 @@ ORDER BY volatilidade DESC;
 | 🇪🇺 EUR | 0.3594 |
 | 🇨🇦 CAD | 0.2584 |
 | 🇯🇵 JPY | 0.1764 |
-| 🇨🇳 CNY | **0.1578** (menor) |
+| 🇨🇳 CNY | **0.1578** (lowest) |
 
-**Interpretaçao:** BRL no topo e CNY na base é exatamente o que a teoria prevê — câmbio flutuante de emergente reage mais que um câmbio administrado pelo Estado chinês. Bom *sanity check* de que os dados e cálculos estão corretos.
+**Interpretation:** BRL at the top and CNY at the bottom is exactly what theory predicts — an emerging-market floating exchange rate reacts more than one managed by the Chinese state. A good *sanity check* that the data and calculations are correct.
 
-
-
-### 📈 Tendência — Quem Desvalorizou vs. Quem Valorizou
+### 📈 Trend — Who Devalued vs. Who Appreciated
 
 ```sql
 SELECT moeda_codigo, variacao_media_diaria,
-    CASE WHEN variacao_media_diaria > 0 THEN 'desvalorizou vs USD'
-         WHEN variacao_media_diaria < 0 THEN 'valorizou vs USD'
-         ELSE 'estável' END AS tendencia
+    CASE WHEN variacao_media_diaria > 0 THEN 'devalued vs USD'
+         WHEN variacao_media_diaria < 0 THEN 'appreciated vs USD'
+         ELSE 'stable' END AS tendencia
 FROM variacao_cambial_30d
 ORDER BY variacao_media_diaria DESC;
 ```
 
-**Interpretação:** BRL lidera a desvalorização (+0.126%/dia em média); AUD lidera a valorização (−0.1537%/dia) — e é justamente uma das 4 moedas mais voláteis do ranking acima. Confirma que volatilidade mede o *tamanho* do movimento, não a *direção*.
+**Interpretation:** BRL leads the devaluation (+0.126%/day on average); AUD leads the appreciation (−0.1537%/day) — and it's also one of the 4 most volatile currencies in the ranking above. This confirms that volatility measures the *magnitude* of the movement, not its *direction*.
 
-
-### 🕒 Evolução Temporal (exemplo: BRL)
+### 🕒 Time Evolution (example: BRL)
 
 ```sql
 SELECT data, ROUND(taxa_usd::numeric, 4) AS taxa
@@ -96,11 +93,9 @@ WHERE moeda_codigo = 'BRL'
 ORDER BY data;
 ```
 
-**Interpretação:** a série diária do Real mostra a trajetória completa por trás do número agregado de volatilidade — útil para plotar em gráfico de linha e visualizar os pontos de inflexão que a média sozinha não conta.
+**Interpretation:** the Real's daily series shows the full trajectory behind the aggregated volatility figure — useful for plotting a line chart and visualizing inflection points that the average alone doesn't reveal.
 
-
-
-### ✅ Alertas Cambiais (BRL)
+### ✅ Exchange Rate Alerts (BRL)
 
 ```sql
 SELECT data, ROUND(taxa_usd::numeric, 4) AS taxa, variacao_diaria_pct
@@ -112,15 +107,14 @@ ORDER BY data DESC;
 Success. No rows returned
 ```
 
-**Interpretação:** mesmo sendo a moeda mais volátil do dataset, o BRL não teve nenhum dia de queda > 3% na janela analisada — a volatilidade veio de muitos movimentos moderados, não de um choque único. Uma tabela vazia, aqui, é o próprio resultado: o sistema de alerta confirma que o período foi turbulento, mas não catastrófico.
+**Interpretation:** even as the most volatile currency in the dataset, BRL had no single day with a drop greater than 3% during the analyzed window — the volatility came from many moderate movements, not a single shock. Here, an empty table is itself a result: the alert system confirms the period was turbulent, but not catastrophic.
 
 ---
 
-
-## Arquitetura
+## Architecture
 
 ```
-   FONTES              INGESTÃO           REFINO            MÉTRICAS          ENTREGA
+   SOURCES             INGESTION           REFINEMENT         METRICS          SERVING
 ┌───────────┐      ┌────────────┐    ┌─────────────┐   ┌──────────────┐  ┌────────────┐
 │ open.er   │─────▶│ 🥉 BRONZE  │───▶│ 🥈 SILVER   │──▶│ 🥇 GOLD      │─▶│  Supabase  │
 │ -api.com  │      │ taxas_     │    │ dim (SCD2)  │   │ variacao_30d │  │ PostgreSQL │
@@ -130,113 +124,113 @@ Success. No rows returned
 │ (GitHub)  │      │ raw        │    │             │   │              │  │            │
 └───────────┘      └────────────┘    └─────────────┘   └──────────────┘  └────────────┘
                         │                  │                  │
-                        └──────── orquestração via %run (nb_05_master) ────────┘
+                        └──────── orchestration via %run (nb_05_master) ────────┘
 ```
 
-**11 moedas:** BRL, EUR, GBP, JPY, MXN, CAD, AUD, CHF, CNY, INR, KRW
-*(majors · Ásia · commodity currencies · LatAm)*
+**11 currencies:** BRL, EUR, GBP, JPY, MXN, CAD, AUD, CHF, CNY, INR, KRW
+*(majors · Asia · commodity currencies · LatAm)*
 
 ---
 
-| Notebook | Camada | Papel |
+| Notebook | Layer | Role |
 |---|---|---|
-| `nb_00_config` | — | Configuração central (schemas, moedas, HTTP, helpers) |
-| `nb_01_bronze` | 🥉 | Ingestão crua das 2 fontes + metadados de linhagem |
-| `nb_02_silver` | 🥈 | Dimensão SCD2 + tabela fato (MERGE idempotente) |
-| `nb_03_gold` | 🥇 | Métricas com window functions |
-| `nb_04_data_serving` | — | Export para o Supabase (+ fallback CSV) |
-| `nb_05_master` | — | Orquestração ponta a ponta |
+| `nb_00_config` | — | Central configuration (schemas, currencies, HTTP, helpers) |
+| `nb_01_bronze` | 🥉 | Raw ingestion from both sources + lineage metadata |
+| `nb_02_silver` | 🥈 | SCD2 dimension + fact table (idempotent MERGE) |
+| `nb_03_gold` | 🥇 | Metrics using window functions |
+| `nb_04_data_serving` | — | Export to Supabase (+ CSV fallback) |
+| `nb_05_master` | — | End-to-end orchestration |
 
 ---
 
-## Como rodar
+## How to run
 
-1. Importe a pasta `notebooks/` (`nb_00` a `nb_05`) num workspace Databricks
-2. Configure o secret da senha do Supabase:
+1. Import the `notebooks/` folder (`nb_00` through `nb_05`) into a Databricks workspace
+2. Configure the Supabase password secret:
 ```bash
-   databricks secrets put --scope infisical --key postgres_password --string-value "SUA_SENHA"
+   databricks secrets put --scope infisical --key postgres_password --string-value "YOUR_PASSWORD"
 ```
-3. Rode o `nb_05_master` — ele executa todo o pipeline em sequência
-4. Confira as tabelas no SQL Editor do Supabase
+3. Run `nb_05_master` — it executes the entire pipeline in sequence
+4. Check the tables in the Supabase SQL Editor
 
-> **Rodando localmente (fora do Databricks):** instale as dependências com `pip install -r requirements.txt`. Note que isso cobre `pyspark` e `delta-spark` para testes locais — no Databricks Free essas bibliotecas já vêm prontas no runtime, então esse passo só é necessário se você quiser rodar partes do pipeline fora da plataforma.
+> **Running locally (outside Databricks):** install the dependencies with `pip install -r requirements.txt`. Note that this covers `pyspark` and `delta-spark` for local testing — on Databricks Free these libraries already ship with the runtime, so this step is only needed if you want to run parts of the pipeline outside the platform.
 
-> **Stack:** Databricks Free· PySpark · Delta Lake · SQL · Supabase (PostgreSQL)
+> **Stack:** Databricks Free · PySpark · Delta Lake · SQL · Supabase (PostgreSQL)
 
 ---
 
 <details>
-<summary><h2> A história técnica (para quem quer aprofundar)</h2></summary>
+<summary><h2> The technical story (for those who want to dig deeper)</h2></summary>
 
-Aqui é onde o projeto fica interessante de verdade. O tema (câmbio) é só o pano de fundo — o aprendizado real veio de **bater de frente com as limitações do Databricks Free Serverless** e engenheirar soluções. Segue a jornada honesta, com os becos sem saída incluídos.
+This is where the project gets genuinely interesting. The subject (exchange rates) is just the backdrop — the real learning came from **running headfirst into the limitations of Databricks Free Serverless** and engineering solutions around them. Here's the honest journey, dead ends included.
 
-### Fonte de dados
+### Data source
 
-O plano original era usar a **Frankfurter API** para o histórico de câmbio. Não funcionou. Ao investigar, descobri que o egress do Free Serverless resolve DNS apenas para uma *allowlist* mínima — um `socket.gethostbyname()` revelou `DNS FAIL` para praticamente todas as APIs de câmbio (Frankfurter, exchangerate.host, currencyapi, fixer, openexchangerates) **e** para CDNs populares (jsdelivr, Cloudflare Pages).
+The original plan was to use the **Frankfurter API** for exchange rate history. It didn't work. Investigating further, I found that Free Serverless egress only resolves DNS for a minimal *allowlist* — a `socket.gethostbyname()` call revealed `DNS FAIL` for virtually every exchange rate API (Frankfurter, exchangerate.host, currencyapi, fixer, openexchangerates) **and** for popular CDNs (jsdelivr, Cloudflare Pages).
 
-Tentei então a Currency-API via CDN — mesmo bloqueio. Fui atrás do repositório de origem no GitHub e descobri que ele **não commita** os JSONs (só publica no npm/CDN). Beco sem saída.
+I then tried the Currency-API via CDN — same block. I went to the source repository on GitHub and discovered it **doesn't commit** the JSON files (it only publishes to npm/CDN). Dead end.
 
-O que **funcionava**? Apenas dois domínios de câmbio: `open.er-api.com` (snapshot atual) e — a virada de chave — o **GitHub** (`raw.githubusercontent.com` e `api.github.com`). Isso abriu o caminho: o **dataset oficial do Federal Reserve H.10**, hospedado no GitHub via datahub.io, tem histórico diário real. Migrei para ele.
+What **did** work? Only two exchange-rate-related domains: `open.er-api.com` (current snapshot) and — the turning point — **GitHub** (`raw.githubusercontent.com` and `api.github.com`). That opened the door to the **official Federal Reserve H.10 dataset**, hosted on GitHub via datahub.io, which has real daily history. I migrated to it.
 
-> **Lição:** documentar a limitação de rede (com o diagnóstico de DNS direto no notebook) virou um dos pontos mais fortes do projeto. Mostra investigação empírica, não tentativa-e-erro cega.
+> **Lesson:** documenting the network limitation (with a direct DNS diagnostic in the notebook) turned into one of the project's strongest points. It demonstrates empirical investigation, not blind trial-and-error.
 
-### Tratando o dado do Fed
+### Handling the Fed data
 
-O CSV do Fed tem particularidades que exigiram tratamento:
-- Usa **nomes de país** ("Brazil", "South Korea"), não códigos ISO → mapa de tradução
-- **EUR, GBP e AUD** vêm cotadas de forma invertida (USD por moeda) → normalização com `1/taxa`
-- A janela de "30 dias" é ancorada nas **datas de negociação reais** (não dias de calendário), evitando buracos de fim de semana/feriado
+The Fed CSV has quirks that required special handling:
+- It uses **country names** ("Brazil", "South Korea"), not ISO codes → required a translation map
+- **EUR, GBP, and AUD** are quoted inverted (USD per currency unit) → normalized using `1/rate`
+- The "30-day" window is anchored to **actual trading dates** (not calendar days), avoiding weekend/holiday gaps
 
-Cobertura honesta: o Fed H.10 tem 11 das 12 moedas que eu queria. ARS, CLP e COP não têm histórico público diário gratuito acessível — foram documentadas como fora de escopo em vez de inventar dados.
+Honest coverage: Fed H.10 provides 11 of the 12 currencies I originally wanted. ARS, CLP, and COP have no freely accessible daily public history — they were documented as out of scope rather than having data fabricated for them.
 
-### Entrega ao Supabase
+### Delivering to Supabase
 
-Escrever no Supabase foi uma sequência de obstáculos, cada um com sua solução:
+Writing to Supabase was a sequence of obstacles, each with its own fix:
 
-1. **`InfisicalSDKClient` para buscar a senha** → `app.infisical.com` bloqueado por DNS. Migrei a senha para o **Databricks Secrets** (alimentado uma vez via Infisical CLI local).
-2. **`.format("jdbc")`** → `UNSUPPORTED_DATA_SOURCE_WRITE`. O Serverless bloqueia o JDBC genérico, mas aceita o conector nativo **`.format("postgresql")`**.
-3. **`.option("sslmode", "require")`** → não suportado no conector nativo. Removido (SSL é automático).
-4. **Host `db.xxx.supabase.co:5432`** → `gaierror` (DNS bloqueado). Só o **Connection Pooler** (`aws-1-...pooler.supabase.com`) resolve.
-5. **Senha via `os.environ`** → `SCRAM... empty password`. O Serverless ignora env vars de cluster; passei a usar `dbutils.secrets.get()`.
-6. **Pooler porta 6543 (transaction)** → `prepared statement "S_1" already exists`. Troquei para a **porta 5432 (session mode)** + `coalesce(1)` para serializar a escrita.
+1. **`InfisicalSDKClient` to fetch the password** → `app.infisical.com` blocked by DNS. Migrated the password to **Databricks Secrets** (seeded once via the local Infisical CLI).
+2. **`.format("jdbc")`** → `UNSUPPORTED_DATA_SOURCE_WRITE`. Serverless blocks generic JDBC, but accepts the native **`.format("postgresql")`** connector.
+3. **`.option("sslmode", "require")`** → not supported by the native connector. Removed (SSL is automatic).
+4. **Host `db.xxx.supabase.co:5432`** → `gaierror` (DNS blocked). Only the **Connection Pooler** (`aws-1-...pooler.supabase.com`) resolves.
+5. **Password via `os.environ`** → `SCRAM... empty password`. Serverless ignores cluster env vars; switched to `dbutils.secrets.get()`.
+6. **Pooler port 6543 (transaction mode)** → `prepared statement "S_1" already exists`. Switched to **port 5432 (session mode)** + `coalesce(1)` to serialize the write.
 
-Depois disso: **4/4 tabelas exportadas com sucesso**.
+After all that: **4/4 tables exported successfully**.
 
-> **Lição:** cada erro trouxe um conceito novo (data sources permitidos no Serverless, connection pooling, modos transaction vs session do PgBouncer/Supavisor). O stacktrace é seu amigo — a solução quase sempre estava na primeira linha do `Caused by`.
+> **Lesson:** every error introduced a new concept (allowed data sources in Serverless, connection pooling, PgBouncer/Supavisor's transaction vs. session modes). The stack trace is your friend — the solution was almost always in the first line of the `Caused by`.
 
-### Conceitos de engenharia aplicados
+### Applied engineering concepts
 
-- **Arquitetura Medalhão** — separação em Bronze/Silver/Gold para rastreabilidade e reprocessamento seletivo
-- **Modelagem dimensional** — tabela fato (`fato_taxas_historico`) + dimensão (`dim_moeda_cambio`)
-- **SCD Tipo 2 com threshold** — histórico de versões, só para mudanças significativas
-- **Window functions** — `LAG` (variação diária), `RANK` (ranking), `ROW_NUMBER` (dia da variação máxima)
-- **Idempotência** — `MERGE`/upsert garante que reexecutar não duplica
-- **Data quality** — validações `assert_not_empty` e sanity checks de domínio
-- **Data lineage** — colunas `_ingested_at`, `_pipeline_run`, `_origem_dados`, `_source_api`
-- **Secrets management** — credenciais no cofre, nunca no código
-- **Graceful degradation** — fallback automático em CSV/Volume se a rede falhar
+- **Medallion Architecture** — Bronze/Silver/Gold separation for traceability and selective reprocessing
+- **Dimensional modeling** — fact table (`fato_taxas_historico`) + dimension table (`dim_moeda_cambio`)
+- **SCD Type 2 with threshold** — version history, only for significant changes
+- **Window functions** — `LAG` (daily variation), `RANK` (ranking), `ROW_NUMBER` (day of maximum variation)
+- **Idempotency** — `MERGE`/upsert ensures re-runs don't duplicate data
+- **Data quality** — `assert_not_empty` validations and domain sanity checks
+- **Data lineage** — `_ingested_at`, `_pipeline_run`, `_origem_dados`, `_source_api` columns
+- **Secrets management** — credentials in a vault, never in the code
+- **Graceful degradation** — automatic CSV/Volume fallback if the network fails
 
-### Decisões de escopo
+### Scope decisions
 
-O desafio original pedia uma correlação BRL × commodities via API externa — bloqueada por DNS. **Adaptei** para uma correlação intra-dataset (cada moeda vs. BRL, via `F.corr`), entregando o valor analítico (medir relação entre ativos) por um caminho viável. Trade-off consciente e documentado.
+The original challenge called for a BRL × commodities correlation via an external API — blocked by DNS. I **adapted** it into an intra-dataset correlation (each currency vs. BRL, via `F.corr`), delivering the analytical value (measuring the relationship between assets) through a viable path. A conscious, documented trade-off.
 
 </details>
 
 ---
 
-## Estrutura do repositório
+## Repository structure
 
 ```
 .
 ├── assets/
-│   └── architecture.png     # diagrama da arquitetura
+│   └── architecture.png     # architecture diagram
 ├── notebooks/
-│   ├── nb_00_config.py      # configuração central
-│   ├── nb_01_bronze.py      # ingestão (snapshot + histórico Fed)
-│   ├── nb_02_silver.py      # SCD2 + fato
-│   ├── nb_03_gold.py        # métricas (LAG, RANK, correlação)
+│   ├── nb_00_config.py      # central configuration
+│   ├── nb_01_bronze.py      # ingestion (snapshot + Fed history)
+│   ├── nb_02_silver.py      # SCD2 + fact table
+│   ├── nb_03_gold.py        # metrics (LAG, RANK, correlation)
 │   ├── nb_04_data_serving.py # export → Supabase
-│   └── nb_05_master.py      # orquestração
+│   └── nb_05_master.py      # orchestration
 ├── requirements.txt
 ├── LICENSE
 └── README.md
@@ -244,16 +238,16 @@ O desafio original pedia uma correlação BRL × commodities via API externa —
 
 ---
 
-## Próximos Passos
+## Next Steps
 
-- [ ] **Dashboard** de visualização (Metabase) conectado ao Supabase
-- [ ] **Notificação diária** por e-mail (GitHub Actions cron + Resend) lendo o data mart
-- [ ] **Expandir a janela histórica** para correlações mais robustas
+- [ ] Visualization **dashboard** (Metabase) connected to Supabase
+- [ ] **Daily email notification** (GitHub Actions cron + Resend) reading from the data mart
+- [ ] **Expand the historical window** for more robust correlations
 
 ---
 
-## Notas
+## Notes
 
-- Ambiente: **Databricks Free**
-- Dados históricos: **Federal Reserve H.10** (fonte oficial, domínio público)
-- Este é um projeto de **portfólio** — foco em boas práticas de engenharia, não em complexidade artificial
+- Environment: **Databricks Free**
+- Historical data: **Federal Reserve H.10** (official, public-domain source)
+- This is a **portfolio** project — the focus is on sound engineering practices, not artificial complexity

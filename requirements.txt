@@ -1,11 +1,11 @@
-# Pipeline de Dados Cambiais — dependências de terceiros
-# (módulos da stdlib como datetime, csv, io e uuid não entram aqui)
+# Currency Exchange Data Pipeline — third-party dependencies
+# (stdlib modules such as datetime, csv, io, and uuid are not included here)
 
-# HTTP — coleta das APIs de câmbio (open.er-api.com, Fed H.10 via GitHub)
+# HTTP — fetches exchange rate APIs (open.er-api.com, Fed H.10 via GitHub)
 requests==2.32.3
 
-# PySpark — transformações Bronze/Silver/Gold
+# PySpark — Bronze/Silver/Gold transformations
 pyspark==3.5.1
 
-# Delta Lake — DeltaTable, MERGE (SCD2 e fato incremental)
+# Delta Lake — DeltaTable, MERGE (SCD2 and incremental fact table)
 delta-spark==3.2.0
