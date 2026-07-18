@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 📈 Projeto 09 — Financeiro | nb_01_bronze
 # MAGIC ### Ingestão de câmbio no Databricks Free Serverless — DADOS REAIS
@@ -69,28 +73,29 @@ else:
 
 # COMMAND ----------
 
-def baixar_historico_datahub(dias: int = 30) -> tuple:
-    """Lê o CSV diário oficial (Fed H.10). Retorna (linhas, paises_nao_mapeados)."""
-    resp = HTTP.get(CSV_HISTORICO, timeout=60)
+def baixar_historico_datahub(data_inicio: str | None = None,
+                             dias: int | None = None) -> tuple:
+    """Lê o CSV diário do Fed H.10.
+    - data_inicio → modo backfill (tudo a partir da data)
+    - dias        → modo incremental (últimos N pregões)
+    """
+    resp = HTTP.get(CSV_HISTORICO, timeout=120)   # payload maior → timeout folgado
     resp.raise_for_status()
     reader = csv.DictReader(io.StringIO(resp.text))
 
     registros, paises_vistos, nao_mapeados = [], set(), set()
     for row in reader:
-        pais = row.get("Country", "")
-        paises_vistos.add(pais)
+        pais = row.get("Country", ""); paises_vistos.add(pais)
         moeda = PAIS_PARA_MOEDA.get(pais)
         if not moeda:
-            nao_mapeados.add(pais)
-            continue
-        val = row.get("Exchange rate", "")
+            nao_mapeados.add(pais); continue
         try:
-            taxa = float(val)
+            taxa = float(row.get("Exchange rate", ""))
         except (ValueError, TypeError):
             continue
         if taxa <= 0:
             continue
-        if moeda in INVERTER:            # normaliza p/ "unidade por USD"
+        if moeda in INVERTER:                 # normaliza p/ "unidade por USD"
             taxa = 1.0 / taxa
         registros.append((row["Date"], moeda, round(taxa, 6)))
 
@@ -98,17 +103,28 @@ def baixar_historico_datahub(dias: int = 30) -> tuple:
         return [], nao_mapeados
 
     datas_disp = sorted({r[0] for r in registros})
-    corte = set(datas_disp[-dias:])      # últimas N datas de negociação (não dias de calendário)
-    log("bronze", f"Fed H.10: dataset até {datas_disp[-1]} | janela {sorted(corte)[0]}..{sorted(corte)[-1]}")
+    if data_inicio:                           # ── backfill por intervalo
+        corte = {d for d in datas_disp if d >= data_inicio}
+    elif dias:                                # ── incremental por janela
+        corte = set(datas_disp[-dias:])
+    else:
+        corte = set(datas_disp)               # tudo
+
+    log("bronze", f"Fed H.10: {datas_disp[0]}..{datas_disp[-1]} | "
+                  f"coletando {min(corte)}..{max(corte)} ({len(corte)} pregões)")
     linhas = [Row(data_ref=d, moeda_codigo=m, taxa_usd=t, base_moeda="USD")
               for (d, m, t) in registros if d in corte]
-    # países que estão no nosso mapa mas não apareceram (divergência de nome)
+
     esperados_ausentes = set(PAIS_PARA_MOEDA) - (paises_vistos & set(PAIS_PARA_MOEDA))
     if esperados_ausentes:
-        log("bronze", f"⚠️ Países esperados NÃO encontrados no CSV: {esperados_ausentes}")
+        log("bronze", f"⚠️ Países esperados NÃO encontrados: {esperados_ausentes}")
     return linhas, nao_mapeados
 
-rows_hist, _ = baixar_historico_datahub(dias=30)
+# Dispatch guiado pela config (nb_00)
+if HIST_MODO == "backfill":
+    rows_hist, _ = baixar_historico_datahub(data_inicio=HIST_DATA_INICIO)
+else:
+    rows_hist, _ = baixar_historico_datahub(dias=HIST_JANELA_DIAS)
 
 bronze_hist = f"{BRONZE}.taxas_historico_raw"
 if rows_hist:

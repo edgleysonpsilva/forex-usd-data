@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 📈 Projeto — Mercado Financeiro | nb_00_config
 # MAGIC
@@ -56,6 +60,21 @@ PAIS_PARA_MOEDA = {
 }
 # Fed cota estas como "USD por unidade" → inverter p/ "unidade por USD" 
 INVERTER = {"EUR", "GBP", "AUD"}
+
+# ──────────────────────────────────────────────────────────────────────────
+# 4.1) JANELA HISTÓRICA — coleta desacoplada da análise
+# ──────────────────────────────────────────────────────────────────────────
+HIST_MODO         = "backfill"     # "backfill" = intervalo mais amplo | "incremental" = janela curta
+HIST_DATA_INICIO  = "2015-01-01"   # piso do backfill (~1 década, 5 anos pré-pandemia)
+HIST_JANELA_DIAS  = 45             # modo incremental: nº de pregões (overlap p/ revisões do Fed)
+DIAS_CURTO_PRAZO  = 30             # janela da visão de curto prazo no Gold
+
+# Regimes p/ análise comparativa (limites inclusivos)
+REGIMES = [
+    ("pre_pandemia", "2015-01-01", "2020-02-29"),
+    ("pandemia",     "2020-03-01", "2021-12-31"),
+    ("pos_pandemia", "2022-01-01", "9999-12-31"),
+]
 
 # ──────────────────────────────────────────────────────────────────────────
 # 5) SESSÃO HTTP com retry/backoff
