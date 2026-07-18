@@ -31,11 +31,15 @@ fato_var = (
     .filter(F.col("taxa_anterior").isNotNull())
 )
 
+# Janela recente: últimos DIAS_CURTO_PRAZO pregões a partir da data mais recente
+data_max = fato.agg(F.max("data")).collect()[0][0]
+fato_recente = fato_var.filter(F.col("data") >= F.date_sub(F.lit(data_max), DIAS_CURTO_PRAZO))
+
 # ── Gold 1 — Variação agregada 30d  ────────────────────────────
 # taxa_atual = valor do último dia: usa last() na janela ordenada
 w_ult = Window.partitionBy("moeda_codigo").orderBy(F.desc("data"))
 variacao = (
-    fato_var
+    fato_recente
     .withColumn("rn", F.row_number().over(w_ult))
     .groupBy("moeda_codigo")
     .agg(
@@ -66,7 +70,7 @@ log("gold", "ranking_desvalorizacao salvo", ranking.count())
 # ── Gold 3 — Alertas cambiais BRL  ─────────────────────────────
 ALERTA_PCT = -3.0
 alertas = (
-    fato_var
+    fato_recente
     .filter((F.col("moeda_codigo") == "BRL") & (F.col("variacao_diaria_pct") < ALERTA_PCT))
     .select("data", "moeda_codigo", "taxa_usd", "variacao_diaria_pct")
     .withColumn("flag", F.lit("ALERTA_CAMBIAL"))
@@ -93,6 +97,64 @@ correl = (
 log("gold", "correlacao_moedas salvo", correl.count())
 
 display(variacao.orderBy(F.desc("volatilidade")))
+
+# COMMAND ----------
+
+# COMMAND ----------
+# Gold 5 — Variação por REGIME (pré / durante / pós-pandemia)
+from pyspark.sql import functions as F   # (já importado; seguro repetir)
+variacao_regime = (
+    fato_var
+    .groupBy("moeda_codigo", "regime")
+    .agg(
+        F.round(F.avg("variacao_diaria_pct"), 4).alias("variacao_media_diaria"),
+        F.round(F.stddev("variacao_diaria_pct"), 4).alias("volatilidade"),
+        F.round(F.min("variacao_diaria_pct"), 4).alias("pior_dia_pct"),
+        F.round(F.max("variacao_diaria_pct"), 4).alias("melhor_dia_pct"),
+        F.count("data").alias("dias_analisados"),
+        F.min("data").alias("de"), F.max("data").alias("ate"),
+    ).withColumn("_updated_at", F.current_timestamp())
+)
+(variacao_regime.write.format("delta").mode("overwrite").option("overwriteSchema","true")
+    .partitionBy("regime").saveAsTable(f"{GOLD}.variacao_cambial_por_regime"))
+log("gold", "variacao_cambial_por_regime salvo", variacao_regime.count())
+
+# COMMAND ----------
+
+# COMMAND ----------
+# Gold 6 — Volatilidade MÓVEL 30d sobre a série inteira (ponte curto↔longo)
+from pyspark.sql.window import Window
+w_roll = Window.partitionBy("moeda_codigo").orderBy("data").rowsBetween(-29, 0)
+vol_movel = (
+    fato_var
+    .withColumn("volatilidade_movel_30d", F.round(F.stddev("variacao_diaria_pct").over(w_roll), 4))
+    .withColumn("var_media_movel_30d",   F.round(F.avg("variacao_diaria_pct").over(w_roll), 4))
+    .select("data", "moeda_codigo", "regime", "taxa_usd",
+            "variacao_diaria_pct", "volatilidade_movel_30d", "var_media_movel_30d")
+    .withColumn("_updated_at", F.current_timestamp())
+)
+(vol_movel.write.format("delta").mode("overwrite").option("overwriteSchema","true")
+    .partitionBy("moeda_codigo").saveAsTable(f"{GOLD}.volatilidade_movel"))
+log("gold", "volatilidade_movel salvo", vol_movel.count())
+
+# COMMAND ----------
+
+# COMMAND ----------
+# Gold 7 — Correlação com o BRL POR REGIME
+base_brl = (fato_var.filter("moeda_codigo='BRL'")
+            .select("data", F.col("variacao_diaria_pct").alias("var_brl")))
+outras   = (fato_var.filter("moeda_codigo <> 'BRL'")
+            .select("moeda_codigo", "data", "regime", F.col("variacao_diaria_pct").alias("var_moeda")))
+correl_regime = (
+    outras.join(base_brl, on="data", how="inner")
+    .groupBy("moeda_codigo", "regime")
+    .agg(F.round(F.corr("var_moeda", "var_brl"), 4).alias("correlacao_com_brl"),
+         F.count("data").alias("dias"))
+    .withColumn("_updated_at", F.current_timestamp())
+)
+(correl_regime.write.format("delta").mode("overwrite").option("overwriteSchema","true")
+    .partitionBy("regime").saveAsTable(f"{GOLD}.correlacao_por_regime"))
+log("gold", "correlacao_por_regime salvo", correl_regime.count())
 
 # COMMAND ----------
 

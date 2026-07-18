@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 📈 Projeto 09 — Financeiro | nb_02_silver
 # MAGIC **SCD Tipo 2** em `dim_moeda_cambio`: nova versão só quando a variação > `THRESHOLD_CAMBIAL`%.
@@ -76,6 +80,17 @@ raw_atual = spark.table(f"{BRONZE}.taxas_atual_raw")
 src_dim = preparar_src(raw_atual)
 aplicar_scd2(src_dim, TGT_DIM)
 
+def coluna_regime(data_col):
+    """Classifica cada data em pré/durante/pós-pandemia a partir de REGIMES (nb_00)."""
+    it = iter(REGIMES)
+    nome, ini, fim = next(it)
+    expr = F.when((data_col >= F.lit(ini).cast("date")) &
+                  (data_col <= F.lit(fim).cast("date")), F.lit(nome))
+    for nome, ini, fim in it:
+        expr = expr.when((data_col >= F.lit(ini).cast("date")) &
+                         (data_col <= F.lit(fim).cast("date")), F.lit(nome))
+    return expr.otherwise(F.lit("indefinido"))
+
 # ── PARTE 2: fato_taxas_historico (MERGE incremental, idempotente) ────────
 raw_hist = spark.table(f"{BRONZE}.taxas_historico_raw")
 fato_novo = (
@@ -84,6 +99,7 @@ fato_novo = (
             F.to_date("data_ref", "yyyy-MM-dd").alias("data"),
             F.col("taxa_usd").cast("double"))
     .dropDuplicates(["moeda_codigo", "data"])
+    .withColumn("regime", coluna_regime(F.col("data")))  
     .withColumn("_processado_em", F.current_timestamp())
 )
 

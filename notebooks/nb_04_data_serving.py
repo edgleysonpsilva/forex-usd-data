@@ -40,7 +40,10 @@ def exportar_postgres(df, tabela) -> bool:
         return False
 
 TABELAS = [
-    (GOLD,   "variacao_cambial_30d"),
+    (GOLD,   "variacao_cambial_30d"),          # curto prazo (já existia)
+    (GOLD,   "variacao_cambial_por_regime"),   # ← NOVO — comparativo pandemia
+    (GOLD,   "volatilidade_movel"),            # ← NOVO — ponte curto↔longo
+    (GOLD,   "correlacao_por_regime"),         # ← NOVO — correlação por regime
     (SILVER, "fato_taxas_historico"),
     (GOLD,   "correlacao_moedas"),
     (GOLD,   "alertas_cambiais_brl"),
