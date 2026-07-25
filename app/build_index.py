@@ -23,9 +23,15 @@ def chunk(texto, alvo=600):
     if atual: blocos.append(atual.strip())
     return blocos
 
-def embed(texto):
-    r = client.models.embed_content(model=EMB_MODEL, contents=texto)
-    return np.array(r.embeddings[0].values, dtype="float32")  # lista de vetores
+def embed(textos):
+    if isinstance(textos, str):
+        textos = [textos]
+    vetores = []
+
+    for t in textos:
+        r = client.models.embed_content(model=EMB_MODEL, contents=t)
+        vetores.append(list(r.embeddings[0].values()))  # 1 vetor por chunk
+    return vetores
 
 def main():
     chunks, origens = [], []
@@ -38,6 +44,8 @@ def main():
         raise SystemExit("Nenhum .md em app/knowledge/")
     print(f"Gerando embeddings de {len(chunks)} chunks...")
     vetores = np.array(embed(chunks), dtype="float32")
+    print("shape gerado:", vetores.shape)                    # deve ser (17, 3072)
+    assert vetores.ndim == 2, "Erro: embeddings não ficaram 2D!"
     np.savez(os.path.join(PASTA, "index.npz"), vetores=vetores)
     with open(os.path.join(PASTA, "chunks.json"), "w", encoding="utf-8") as f:
         json.dump({"chunks": chunks, "origens": origens}, f, ensure_ascii=False)
