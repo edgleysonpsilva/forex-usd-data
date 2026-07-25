@@ -46,7 +46,6 @@ if pergunta := st.chat_input("Sua pergunta sobre o câmbio..."):
     with st.chat_message("assistant"):
         st.caption(f"Rota escolhida: {r['rota']}")          # transparência do roteamento
         st.write(r["resposta"])
-
         if r.get("linhas"):
             import pandas as pd, plotly.express as px
             df = pd.DataFrame(r["linhas"], columns=r["colunas"])
