@@ -16,7 +16,7 @@ def _carregar():
     return _cache
 
 def _embed_query(texto):
-    r = client.models.embed_content(model=EMB_MODEL, contents=texto),
+    r = client.models.embed_content(model=EMB_MODEL, contents=texto)
     return np.array(r.embeddings[0].values, dtype="float32")
 
 def recuperar(pergunta, k=3):
