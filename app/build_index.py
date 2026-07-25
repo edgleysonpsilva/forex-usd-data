@@ -30,7 +30,7 @@ def embed(textos):
 
     for t in textos:
         r = client.models.embed_content(model=EMB_MODEL, contents=t)
-        vetores.append(list(r.embeddings[0].values()))  # 1 vetor por chunk
+        vetores.append(list(r.embeddings[0].values))  # 1 vetor por chunk
     return vetores
 
 def main():
