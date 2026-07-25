@@ -1,79 +1,81 @@
+"""agent.py — Agente text-to-SQL de análise cambial (v2 com contexto de negócio)."""
+import os, re, psycopg2
+
+MAX_TENTATIVAS    = 3
+LIMITE_LINHAS     = 500     # teto de linhas retornadas (segurança)
+LIMITE_LINHAS_LLM = 25      # amostra enviada ao LLM (gestão de contexto)
+
+PROIBIDO = re.compile(r"\b(drop|delete|update|insert|alter|truncate|grant|"
+                      r"revoke|create|merge|call|copy|vacuum|reindex)\b", re.IGNORECASE)
+
+CONTEXTO_NEGOCIO = """
+PROPÓSITO: sistema de ANÁLISE HISTÓRICA de taxas de câmbio (NÃO é tempo real / trading).
+Dados: Federal Reserve H.10, frequência diária. "Mais recente" = última data existente na base.
+MOEDA PRIORITÁRIA: BRL. Se a pergunta NÃO indicar a moeda, assuma 'BRL'.
+Moedas: BRL, EUR, GBP, JPY, CNY, CAD, AUD, CHF, MXN, KRW, INR (todas contra USD).
+
+COLUNAS:
+- taxa_usd: unidades da moeda por 1 DÓLAR. Ex.: BRL=5.2 → US$1=R$5,20. MAIOR=mais fraca.
+- variacao_diaria_pct: variação % dia a dia.
+- volatilidade_movel_30d: desvio-padrão das variações diárias em 30d (risco, não direção).
+- regime: 'pre_pandemia' | 'pandemia' | 'pos_pandemia'.  moeda_codigo: código ISO.
+
+ONDE BUSCAR:
+- valor do dólar / série / volatilidade diária → volatilidade_movel
+  (data, moeda_codigo, taxa_usd, variacao_diaria_pct, volatilidade_movel_30d, regime)
+- agregado por regime → variacao_cambial_por_regime
+- ranking 30d → variacao_cambial_30d   ·   base bruta → fato_taxas_historico
+
+REGRAS:
+- SEMPRE filtre por moeda_codigo (default 'BRL').
+- atual/hoje → ORDER BY data DESC LIMIT 1.
+- evolução/série/gráfico → SELECT data (ou DATE_TRUNC('week',data)::date) + valor, ORDER BY data.
+- top/maior/menor N → ORDER BY ... LIMIT N.
+- ROUND sobre cálculo exige ::numeric.
+- par cruzado A/B (sem USD) → taxa_usd_A / taxa_usd_B na mesma data (JOIN por data).
 """
-Núcleo do agente text-to-SQL (reutilizável por CLI e web)
-Rags: [C1]=agente [C2]=loop/ReAct [C3]=LLM [C4]=estado [C5]=ferramenta [C6]=guardrail
-"""
-import os
-import re
-import psycopg2
 
-MAX_TENTATIVAS   = 3     # [C2] nº de ciclos de auto-correção do loop ReAct
-LIMITE_LINHAS    = 100   # [C6] teto de linhas retornadas 
-LIMITE_LINHAS_LLM = 20   # [C4] amostra enviada ao LLM 
-
-# [C6] Guardrail camada 1: comandos que nunca podem aparecer
-PROIBIDO = re.compile(
-    r"\b(drop|delete|update|insert|alter|truncate|grant|revoke|create|"
-    r"merge|call|copy|vacuum|reindex)\b", re.IGNORECASE)
-
-
-# ─── [C3] INTEGRAÇÃO COM LLM — abstração multi-provedor ────────────────────
-# O "cérebro" do agente. Troca-se o provedor por variável de ambiente:
-#   LLM_PROVIDER=groq    → nuvem, grátis (deploy público)
-def chamar_llm(prompt: str, temperature: float) -> str:
+def chamar_llm(prompt, temperature):
     provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
-
-    if provider == "groq":                    # OpenAI-compatível
+    if provider == "ollama":
+        import ollama
+        r = ollama.chat(model=os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:7b"),
+                        messages=[{"role": "user", "content": prompt}],
+                        options={"temperature": temperature})
+        return r["message"]["content"].strip()
+    if provider == "groq":
         from groq import Groq
-        client = Groq(api_key=os.environ["GROQ_API_KEY"])
-        r = client.chat.completions.create(
+        cli = Groq(api_key=os.environ["GROQ_API_KEY"])
+        r = cli.chat.completions.create(
             model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-        )
+            messages=[{"role": "user", "content": prompt}], temperature=temperature)
         return r.choices[0].message.content.strip()
-
     raise ValueError(f"LLM_PROVIDER desconhecido: {provider}")
 
-
-# ─── CONEXÃO (Supabase via pooler, SSL) ────────────────────────────────────
 def conectar():
-    try:
-        conn = psycopg2.connect(
-            host=os.environ.get("SUPABASE_HOST", "aws-1-ca-central-1.pooler.supabase.com"),
-            port=os.environ.get("SUPABASE_PORT", "5432"),
-            dbname=os.environ.get("SUPABASE_DB", "postgres"),
-            user=os.environ["SUPABASE_USER"],          # use o usuário READ-ONLY!
-            password=os.environ["SUPABASE_PASSWORD"],
-            sslmode="require", connect_timeout=10,
-        )
-        with conn.cursor() as cur:
-            cur.execute("SET statement_timeout = '15s'")   # [C6] nenhuma query trava o agente
-        conn.commit()
-        return conn
-    except KeyError as e:
-        raise SystemExit(f"❌ Variável ausente: {e}. Defina SUPABASE_USER e SUPABASE_PASSWORD.")
-
-
-# ─── [C1] PERCEPÇÃO DO AMBIENTE — o agente "enxerga" o banco sozinho ────────
-# lê o schema real.
-def obter_schema(conn) -> str:
-    q = """SELECT table_name, column_name, data_type
-           FROM information_schema.columns
-           WHERE table_schema='public'
-           ORDER BY table_name, ordinal_position"""
+    conn = psycopg2.connect(
+        host=os.environ.get("SUPABASE_HOST", "aws-1-ca-central-1.pooler.supabase.com"),
+        port=os.environ.get("SUPABASE_PORT", "5432"),
+        dbname=os.environ.get("SUPABASE_DB", "postgres"),
+        user=os.environ["SUPABASE_USER"], password=os.environ["SUPABASE_PASSWORD"],
+        sslmode="require", connect_timeout=10)
     with conn.cursor() as cur:
-        cur.execute(q)
+        cur.execute("SET statement_timeout = '15s'")
+    conn.commit()
+    return conn
+
+def obter_schema(conn):
+    with conn.cursor() as cur:
+        cur.execute("""SELECT table_name, column_name, data_type FROM information_schema.columns
+                       WHERE table_schema='public' ORDER BY table_name, ordinal_position""")
         linhas = cur.fetchall()
-    tabelas = {}
-    for t, c, tipo in linhas:
-        tabelas.setdefault(t, []).append(f"{c} {tipo}")
-    return "\n".join(f"- {t}({', '.join(cols)})" for t, cols in tabelas.items())
+    t = {}
+    for tabela, col, tipo in linhas:
+        t.setdefault(tabela, []).append(f"{col} {tipo}")
+    return "\n".join(f"- {k}({', '.join(v)})" for k, v in t.items())
 
-
-# ─── [C5] A FERRAMENTA — a única "mão" do agente: executar SELECT ───────────
-def executar_sql(conn, sql: str):
+def executar_sql(conn, sql):
     sql = sql.strip().rstrip(";")
-    # [C6] Guardrails: valida ANTES de executar (saída do LLM = input não confiável)
     if not sql.lower().startswith(("select", "with")):
         raise ValueError("Apenas SELECT/WITH são permitidos.")
     if PROIBIDO.search(sql):
@@ -81,66 +83,59 @@ def executar_sql(conn, sql: str):
     if ";" in sql:
         raise ValueError("Múltiplas statements não são permitidas.")
     with conn.cursor() as cur:
-        cur.execute(f"SELECT * FROM ({sql}) AS _sub LIMIT {LIMITE_LINHAS}")  # [C6] teto
+        cur.execute(f"SELECT * FROM ({sql}) AS _s LIMIT {LIMITE_LINHAS}")
         colunas = [d[0] for d in cur.description]
         linhas = cur.fetchall()
     return colunas, linhas
 
-
-# ─── [C3] PROMPTS — o "programa" do LLM ────────────────────────────────────
 def _prompt_sql(schema, pergunta, erro=""):
-    correcao = (f'\n\nA tentativa anterior falhou: "{erro}"\nCorrija levando isso em conta.'
-                if erro else "")   # [C2] realimenta o erro no loop de auto-correção
-    return f"""Você é um especialista em PostgreSQL. Gere UMA consulta SQL que responda à pergunta.
-REGRAS:
-- Use APENAS as tabelas/colunas do schema abaixo.
-- SOMENTE o SQL, sem explicações e sem ```.
-- Apenas SELECT. Sintaxe PostgreSQL (use ::numeric em ROUND, ex: ROUND(x::numeric,2)).
-- "top N" / "mais/menos" → use ORDER BY + LIMIT.
+    corr = f'\n\nA tentativa anterior falhou: "{erro}"\nCorrija.' if erro else ""
+    return f"""Você é um especialista em PostgreSQL e câmbio. Gere UMA consulta SQL.
+{CONTEXTO_NEGOCIO}
+SINTAXE: use APENAS o schema; SOMENTE o SQL, sem ``` e sem explicação; apenas SELECT.
 
 SCHEMA:
 {schema}
 
-PERGUNTA: {pergunta}{correcao}
+PERGUNTA: {pergunta}{corr}
 
 SQL:"""
 
 def _prompt_resposta(pergunta, colunas, linhas):
     cab = " | ".join(colunas)
-    corpo = "\n".join(" | ".join(str(v) for v in lin) for lin in linhas[:LIMITE_LINHAS_LLM])
+    corpo = "\n".join(" | ".join(str(v) for v in l) for l in linhas[:LIMITE_LINHAS_LLM])
     return f"""Pergunta: {pergunta}
 
-Resultado da consulta:
+Resultado (Federal Reserve H.10 — análise histórica, não tempo real):
 {cab}
 {corpo}
 
-Responda em português brasileiro, direto, citando os números. Baseie-se APENAS nos dados acima. Não invente."""
-
+Responda em português, DIDÁTICO e ACIONÁVEL: cite os números; se houver data, cite a data de
+referência; se for taxa_usd lembre que maior=moeda mais fraca; se for tendência diga direção+magnitude.
+Baseie-se SÓ nos dados acima. Não invente."""
 
 def gerar_sql(schema, pergunta, erro=""):
-    bruto = chamar_llm(_prompt_sql(schema, pergunta, erro), temperature=0.1)  # [C3] baixa temp
-    return re.sub(r"```sql|```", "", bruto).strip()                           # parsing
+    bruto = chamar_llm(_prompt_sql(schema, pergunta, erro), 0.1)
+    return re.sub(r"```sql|```", "", bruto).strip()
 
 def formatar_resposta(pergunta, colunas, linhas):
-    return chamar_llm(_prompt_resposta(pergunta, colunas, linhas), temperature=0.3)
+    return chamar_llm(_prompt_resposta(pergunta, colunas, linhas), 0.3)
 
-
-# ─── [C1][C2][C4] O LOOP DO AGENTE: raciocina → age → observa → corrige ─────
-def responder(conn, schema, pergunta) -> dict:
-    erro_anterior = ""                                  # [C4] estado efêmero
-    sql = ""
-    for tentativa in range(1, MAX_TENTATIVAS + 1):      # [C2] loop ReAct
-        sql = gerar_sql(schema, pergunta, erro_anterior)      # raciocínio
+def responder(conn, schema, pergunta):
+    erro, sql = "", ""
+    for tentativa in range(1, MAX_TENTATIVAS + 1):
+        sql = gerar_sql(schema, pergunta, erro)
         try:
-            colunas, linhas = executar_sql(conn, sql)         # ação
+            colunas, linhas = executar_sql(conn, sql)
             if not linhas:
                 return {"resposta": "A consulta rodou, mas não retornou resultados.",
-                        "sql": sql, "tentativas": tentativa}
-            texto = formatar_resposta(pergunta, colunas, linhas)   # observação → resposta
-            return {"resposta": texto, "sql": sql, "tentativas": tentativa}
-        except Exception as e:                                # falhou → auto-correção
-            erro_anterior = str(e).strip().splitlines()[0]    # [C4] guarda o erro
+                        "sql": sql, "tentativas": tentativa, "colunas": [], "linhas": []}
+            texto = formatar_resposta(pergunta, colunas, linhas)
+            return {"resposta": texto, "sql": sql, "tentativas": tentativa,
+                    "colunas": colunas, "linhas": linhas}    # ← dados p/ plotagem
+        except Exception as e:
+            erro = str(e).strip().splitlines()[0]
             try: conn.rollback()
             except Exception: pass
-    return {"resposta": f"Não consegui após {MAX_TENTATIVAS} tentativas. Último erro: {erro_anterior}",
-            "sql": sql, "tentativas": MAX_TENTATIVAS}
+    return {"resposta": f"Não consegui após {MAX_TENTATIVAS} tentativas. Último erro: {erro}",
+            "sql": sql, "tentativas": MAX_TENTATIVAS, "colunas": [], "linhas": []}
