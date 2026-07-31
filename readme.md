@@ -114,17 +114,16 @@ Success. No rows returned
 ## Architecture
 
 ```
-   SOURCES             INGESTION           REFINEMENT         METRICS          SERVING
-┌───────────┐      ┌────────────┐    ┌─────────────┐   ┌──────────────┐  ┌────────────┐
-│ open.er   │─────▶│ 🥉 BRONZE  │───▶│ 🥈 SILVER   │──▶│ 🥇 GOLD      │─▶│  Supabase  │
-│ -api.com  │      │ taxas_     │    │ dim (SCD2)  │   │ variacao_30d │  │ PostgreSQL │
-│ (snapshot)│      │ atual_raw  │    │ + fato      │   │ ranking      │  │            │
-├───────────┤      │ taxas_     │    │ (MERGE)     │   │ alertas      │  │ (pooler,   │
-│ Fed H.10  │─────▶│ historico_ │    │             │   │ correlacao   │  │  session)  │
-│ (GitHub)  │      │ raw        │    │             │   │              │  │            │
-└───────────┘      └────────────┘    └─────────────┘   └──────────────┘  └────────────┘
-                        │                  │                  │
-                        └──────── orchestration via %run (nb_05_master) ────────┘
+   SOURCES          INGESTION        REFINEMENT        METRICS               SERVING              CONSUMPTION
+┌───────────┐    ┌────────────┐  ┌─────────────┐  ┌──────────────────┐  ┌────────────┐      ┌──────────────────┐
+│ open.er   │───▶│ 🥉 BRONZE  │─▶│ 🥈 SILVER   │─▶│ 🥇 GOLD          │─▶│  Supabase  │──┬──▶│ 📊 Metabase      │
+│ -api.com  │    │ raw tables │  │ dim (SCD2)  │  │ variacao_30d     │  │ PostgreSQL │  │   │   dashboards     │
+├───────────┤    │            │  │ + fato      │  │ ranking          │  │ (pooler,   │  │   ├──────────────────┤
+│ Fed H.10  │───▶│            │  │ + regime    │  │ vol_movel        │  │  session)  │  └──▶│ 🤖 AI agent      │
+│ (GitHub)  │    │            │  │ (MERGE)     │  │ por_regime       │  │            │      │  (Streamlit:     │
+└───────────┘    └────────────┘  └─────────────┘  │ alertas · correl │  └────────────┘      │  text-to-SQL+RAG)│
+                      │               │           └──────────────────┘                       └──────────────────┘
+                      └──── orchestration via %run (nb_05_master) ────┘
 ```
 
 **11 currencies:** BRL, EUR, GBP, JPY, MXN, CAD, AUD, CHF, CNY, INR, KRW
@@ -132,18 +131,78 @@ Success. No rows returned
 
 ---
 
+## The pipeline (Databricks)
+
 | Notebook | Layer | Role |
 |---|---|---|
-| `nb_00_config` | — | Central configuration (schemas, currencies, HTTP, helpers) |
-| `nb_01_bronze` | 🥉 | Raw ingestion from both sources + lineage metadata |
-| `nb_02_silver` | 🥈 | SCD2 dimension + fact table (idempotent MERGE) |
-| `nb_03_gold` | 🥇 | Metrics using window functions |
-| `nb_04_data_serving` | — | Export to Supabase (+ CSV fallback) |
+| `nb_00_config` | — | Central config (schemas, currencies, HTTP, **history window & regimes**, helpers) |
+| `nb_01_bronze` | 🥉 | Raw ingestion from both sources (**backfill / incremental** by date) + lineage |
+| `nb_02_silver` | 🥈 | SCD2 dimension + fact table (idempotent MERGE) + **regime** column |
+| `nb_03_gold` | 🥇 | Metrics via window functions (30d, ranking, alerts, correlation, **per-regime**, **rolling volatility**) |
+| `nb_04_data_serving` | — | Export **7 tables** to Supabase (+ CSV fallback) |
 | `nb_05_master` | — | End-to-end orchestration |
+
+### History window (collection ≠ analysis)
+A key design decision: the **collection** window is decoupled from the **analysis** window. `nb_00_config` exposes:
+- `HIST_MODO` — `backfill` (wide, one-time) or `incremental` (short, with overlap for Fed revisions)
+- `HIST_DATA_INICIO = "2015-01-01"` — ~a decade, giving a solid pre-pandemic baseline
+- `REGIMES` — the pre/during/post-pandemic boundaries, stamped onto every fact row
+
+This lets a single fact table power both **short-term** views (recent trend) and **regime comparisons** (pandemic impact) without re-collecting anything.
 
 ---
 
-## How to run
+## 📊 Visualization — Metabase
+
+Metabase runs locally via **Docker** and connects directly to the Gold layer on Supabase.
+
+```bash
+cd metabase
+docker compose up -d          # Metabase at http://localhost:3000
+```
+
+The dashboard covers: the dollar's trajectory in BRL, rolling 30-day volatility (the March 2020 spike), volatility by regime, and a currency filter driving the time-series charts. Ready-to-use SQL for every card lives in [`docs/metabase-queries.md`](docs/metabase-queries.md).
+
+> The `metabase/` folder ships only the `docker-compose.yml`; the H2 app database lives in a gitignored volume.
+
+---
+
+## 🤖 AI Agent — Hybrid Text-to-SQL + RAG
+
+A natural-language interface (in Portuguese) over the same Gold layer, built as a **first hands-on experiment with agents**. The goal here was to understand how the pieces fit together — routing, tool use, guardrails, retrieval — rather than to maximize the agent's "intelligence" (the RAG context is intentionally lean).
+
+### How it works
+A lightweight **router** classifies each question and picks a path:
+
+| Question type | Route | What happens |
+|---|---|---|
+| Needs a **number / calculation** | 🧮 **Text-to-SQL** | LLM generates SQL → runs on Postgres → answer + auto-plotted chart |
+| Needs an **explanation / context** | 📚 **RAG** | Semantic search over project docs → grounded answer citing sources |
+| Needs **both** | 🔀 **Hybrid** | Combines the computed number with documental context |
+
+### Why not RAG for everything?
+RAG *retrieves text*; it can't *compute*. For rankings, averages and volatility, **text-to-SQL** is the right tool; for "why did the dollar spike in March 2020?", **RAG** grounds the answer in curated documents (with sourced facts from the BCB / IMF). Choosing the right architecture per question type was the main takeaway — more valuable than any single framework.
+
+### Stack (all free tiers, zero cost)
+- **Streamlit** — web UI (chat + charts)
+- **Groq** (Llama 3.3) — LLM for SQL generation and answers · **Ollama** for local dev (pluggable provider)
+- **Gemini `text-embedding`** — embeddings for retrieval (no heavy local models)
+- **NumPy** — in-memory cosine similarity (corpus is small; no vector DB needed)
+- **Safety guardrails**: SELECT-only, forbidden-keyword regex, single-statement enforcement, `statement_timeout`, row `LIMIT`, and a **read-only** database user
+
+### Run it
+```bash
+pip install -r requirements.txt
+# set secrets: GROQ_API_KEY, GEMINI_API_KEY, SUPABASE_* (read-only user)
+python app/build_index.py        # build the RAG index from app/knowledge/*.md (run once)
+streamlit run app/app_chat.py    # or: python app/cli.py  (terminal version)
+```
+
+> **Honest scope:** this is a first pass at agents. It demonstrates the architecture (routing, tool use, retrieval, guardrails) end-to-end; deepening the agent's context and reasoning is a deliberate future step.
+
+---
+
+## How to run the pipeline
 
 1. Import the `notebooks/` folder (`nb_00` through `nb_05`) into a Databricks workspace
 2. Configure the Supabase password secret:
@@ -153,66 +212,73 @@ Success. No rows returned
 3. Run `nb_05_master` — it executes the entire pipeline in sequence
 4. Check the tables in the Supabase SQL Editor
 
-> **Running locally (outside Databricks):** install the dependencies with `pip install -r requirements.txt`. Note that this covers `pyspark` and `delta-spark` for local testing — on Databricks Free these libraries already ship with the runtime, so this step is only needed if you want to run parts of the pipeline outside the platform.
+> **Requirements:** `requirements.txt` covers both the app (Streamlit, psycopg2, plotly, groq, google-genai, numpy) and the pipeline (`pyspark`, `delta-spark`) for optional local runs. On Databricks Free the Spark libraries already ship with the runtime.
 
-> **Stack:** Databricks Free · PySpark · Delta Lake · SQL · Supabase (PostgreSQL)
+> **Stack:** Databricks Free · PySpark · Delta Lake · SQL · Supabase (PostgreSQL) · Docker · Metabase · Streamlit · Groq · Gemini embeddings
 
 ---
 
 <details>
 <summary><h2> The technical story (for those who want to dig deeper)</h2></summary>
 
-This is where the project gets genuinely interesting. The subject (exchange rates) is just the backdrop — the real learning came from **running headfirst into the limitations of Databricks Free Serverless** and engineering solutions around them. Here's the honest journey, dead ends included.
+This is where the project gets genuinely interesting. The subject (exchange rates) is just the backdrop — the real learning came from **running headfirst into the limitations of free tiers** and engineering solutions around them. Here's the honest journey, dead ends included.
 
 ### Data source
 
-The original plan was to use the **Frankfurter API** for exchange rate history. It didn't work. Investigating further, I found that Free Serverless egress only resolves DNS for a minimal *allowlist* — a `socket.gethostbyname()` call revealed `DNS FAIL` for virtually every exchange rate API (Frankfurter, exchangerate.host, currencyapi, fixer, openexchangerates) **and** for popular CDNs (jsdelivr, Cloudflare Pages).
+The original plan was the **Frankfurter API**. It didn't work. Free Serverless egress only resolves DNS for a minimal *allowlist* — a `socket.gethostbyname()` call revealed `DNS FAIL` for virtually every exchange-rate API (Frankfurter, exchangerate.host, currencyapi, fixer, openexchangerates) **and** for popular CDNs (jsdelivr, Cloudflare Pages).
 
-I then tried the Currency-API via CDN — same block. I went to the source repository on GitHub and discovered it **doesn't commit** the JSON files (it only publishes to npm/CDN). Dead end.
+What **did** work? Only `open.er-api.com` (current snapshot) and — the turning point — **GitHub** (`raw.githubusercontent.com`). That opened the door to the **official Federal Reserve H.10 dataset**, hosted on GitHub via datahub.io, with real daily history. I migrated to it.
 
-What **did** work? Only two exchange-rate-related domains: `open.er-api.com` (current snapshot) and — the turning point — **GitHub** (`raw.githubusercontent.com` and `api.github.com`). That opened the door to the **official Federal Reserve H.10 dataset**, hosted on GitHub via datahub.io, which has real daily history. I migrated to it.
-
-> **Lesson:** documenting the network limitation (with a direct DNS diagnostic in the notebook) turned into one of the project's strongest points. It demonstrates empirical investigation, not blind trial-and-error.
+> **Lesson:** documenting the network limitation (with a direct DNS diagnostic in the notebook) became one of the project's strongest points — empirical investigation, not blind trial-and-error.
 
 ### Handling the Fed data
 
-The Fed CSV has quirks that required special handling:
-- It uses **country names** ("Brazil", "South Korea"), not ISO codes → required a translation map
-- **EUR, GBP, and AUD** are quoted inverted (USD per currency unit) → normalized using `1/rate`
-- The "30-day" window is anchored to **actual trading dates** (not calendar days), avoiding weekend/holiday gaps
+- Uses **country names** ("Brazil", "South Korea"), not ISO codes → translation map
+- **EUR, GBP, AUD** are quoted inverted (USD per unit) → normalized with `1/rate`
+- The window is anchored to **actual trading dates**, avoiding weekend/holiday gaps
 
-Honest coverage: Fed H.10 provides 11 of the 12 currencies I originally wanted. ARS, CLP, and COP have no freely accessible daily public history — they were documented as out of scope rather than having data fabricated for them.
+Honest coverage: Fed H.10 provides 11 of the 12 currencies originally wanted. ARS, CLP and COP have no freely accessible daily history — documented as out of scope rather than fabricated.
+
+### Expanding the history (30 days → ~a decade)
+
+The original project kept only the last 30 days. The insight while extending it: **the collection window should be decoupled from the analysis window.** The Fed CSV already contains decades of history — the old code was discarding it in `datas_disp[-dias:]`. Pulling from 2015 costs virtually nothing extra (it's the same download), so I switched Bronze to accept a **date-based backfill** and stamped each fact row with its **regime**. Result: ~30k rows enabling both short-term views and pre/during/post-pandemic comparisons — from one fact table.
 
 ### Delivering to Supabase
 
 Writing to Supabase was a sequence of obstacles, each with its own fix:
 
-1. **`InfisicalSDKClient` to fetch the password** → `app.infisical.com` blocked by DNS. Migrated the password to **Databricks Secrets** (seeded once via the local Infisical CLI).
-2. **`.format("jdbc")`** → `UNSUPPORTED_DATA_SOURCE_WRITE`. Serverless blocks generic JDBC, but accepts the native **`.format("postgresql")`** connector.
-3. **`.option("sslmode", "require")`** → not supported by the native connector. Removed (SSL is automatic).
-4. **Host `db.xxx.supabase.co:5432`** → `gaierror` (DNS blocked). Only the **Connection Pooler** (`aws-1-...pooler.supabase.com`) resolves.
-5. **Password via `os.environ`** → `SCRAM... empty password`. Serverless ignores cluster env vars; switched to `dbutils.secrets.get()`.
-6. **Pooler port 6543 (transaction mode)** → `prepared statement "S_1" already exists`. Switched to **port 5432 (session mode)** + `coalesce(1)` to serialize the write.
+1. **Infisical SDK** to fetch the password → `app.infisical.com` blocked. Migrated to **Databricks Secrets**.
+2. **`.format("jdbc")`** → `UNSUPPORTED_DATA_SOURCE_WRITE`. Serverless accepts the native **`.format("postgresql")`** connector.
+3. **`sslmode=require`** → unsupported by the native connector. Removed (SSL is automatic).
+4. **Host `db.xxx.supabase.co`** → `gaierror` (DNS blocked). Only the **Connection Pooler** resolves.
+5. **Password via `os.environ`** → empty password. Serverless ignores cluster env vars; used `dbutils.secrets.get()`.
+6. **Pooler port 6543 (transaction mode)** → `prepared statement already exists`. Switched to **port 5432 (session mode)** + `coalesce(1)`.
 
-After all that: **4/4 tables exported successfully**.
+After all that: all tables exported successfully.
 
-> **Lesson:** every error introduced a new concept (allowed data sources in Serverless, connection pooling, PgBouncer/Supavisor's transaction vs. session modes). The stack trace is your friend — the solution was almost always in the first line of the `Caused by`.
+> **Lesson:** every error introduced a new concept (allowed data sources in Serverless, connection pooling, PgBouncer/Supavisor's transaction vs. session modes). The stack trace is your friend.
+
+### Hosting the AI agent for free
+
+The agent uses **Ollama** locally, but a local LLM can't be hosted 24/7 on a free tier (RAM/GPU). So the LLM provider is **pluggable**: `LLM_PROVIDER=ollama` for dev, `LLM_PROVIDER=groq` for the deployed app — same code. For RAG, the usual `sentence-transformers` pulls in PyTorch (~2 GB) and blows past Streamlit Cloud's memory, so embeddings run **via the Gemini API** and similarity is a plain NumPy cosine — no heavy dependencies. And to connect on the pooler, the username needs the `.project_ref` suffix (`ENOIDENTIFIER` / `ENOTFOUND` errors otherwise).
+
+> **Lesson:** "free" often forces better architecture — dependency inversion (pluggable LLM), and choosing the lightest tool that does the job.
 
 ### Applied engineering concepts
 
 - **Medallion Architecture** — Bronze/Silver/Gold separation for traceability and selective reprocessing
-- **Dimensional modeling** — fact table (`fato_taxas_historico`) + dimension table (`dim_moeda_cambio`)
-- **SCD Type 2 with threshold** — version history, only for significant changes
-- **Window functions** — `LAG` (daily variation), `RANK` (ranking), `ROW_NUMBER` (day of maximum variation)
-- **Idempotency** — `MERGE`/upsert ensures re-runs don't duplicate data
-- **Data quality** — `assert_not_empty` validations and domain sanity checks
-- **Data lineage** — `_ingested_at`, `_pipeline_run`, `_origem_dados`, `_source_api` columns
-- **Secrets management** — credentials in a vault, never in the code
-- **Graceful degradation** — automatic CSV/Volume fallback if the network fails
+- **Dimensional modeling** — fact (`fato_taxas_historico`) + dimension (`dim_moeda_cambio`) + regime attribute
+- **SCD Type 2 with threshold** — versioned history, only for significant changes
+- **Window functions** — `LAG`, `RANK`, `ROW_NUMBER`, and rolling `STDDEV` for moving volatility
+- **Idempotency** — `MERGE`/upsert so re-runs don't duplicate
+- **Data quality & lineage** — `assert_not_empty`, sanity checks, `_ingested_at`/`_pipeline_run`/`_origem_dados`
+- **Secrets management** — credentials in a vault, never in code; **read-only** DB user for public consumers
+- **Data-product thinking** — one Gold layer, two consumers (dashboards + agent)
+- **Agentic patterns** — ReAct loop, tool use, intent routing, RAG retrieval, defense-in-depth guardrails
 
 ### Scope decisions
 
-The original challenge called for a BRL × commodities correlation via an external API — blocked by DNS. I **adapted** it into an intra-dataset correlation (each currency vs. BRL, via `F.corr`), delivering the analytical value (measuring the relationship between assets) through a viable path. A conscious, documented trade-off.
+The original challenge called for a BRL × commodities correlation via an external API — blocked by DNS. I **adapted** it into an intra-dataset correlation (each currency vs. BRL, via `F.corr`), later extended **per regime**. A conscious, documented trade-off.
 
 </details>
 
@@ -222,15 +288,26 @@ The original challenge called for a BRL × commodities correlation via an extern
 
 ```
 .
-├── assets/
-│   └── architecture.png     # architecture diagram
-├── notebooks/
-│   ├── nb_00_config.py      # central configuration
-│   ├── nb_01_bronze.py      # ingestion (snapshot + Fed history)
-│   ├── nb_02_silver.py      # SCD2 + fact table
-│   ├── nb_03_gold.py        # metrics (LAG, RANK, correlation)
-│   ├── nb_04_data_serving.py # export → Supabase
-│   └── nb_05_master.py      # orchestration
+├── app/                       # 🤖 AI agent (Streamlit)
+│   ├── agent.py               #   text-to-SQL core (LLM, guardrails, ReAct loop)
+│   ├── rag.py                 #   semantic retrieval (Gemini embeddings + NumPy)
+│   ├── hibrido.py             #   router + orchestration (SQL / RAG / hybrid)
+│   ├── app_chat.py            #   web UI (chat + auto charts)
+│   ├── build_index.py         #   builds the RAG index from knowledge/*.md
+│   ├── cli.py                 #   terminal version
+│   └── knowledge/             #   RAG corpus (glossary, macro context) + index
+├── metabase/
+│   └── docker-compose.yml     # 📊 Metabase (dashboards over Supabase)
+├── docs/
+│   └── metabase-queries.md    #   ready-to-use SQL for each dashboard card
+├── notebooks/                 # 🏗️ Databricks pipeline
+│   ├── nb_00_config.py        #   central config (+ history window & regimes)
+│   ├── nb_01_bronze.py        #   ingestion (snapshot + Fed backfill/incremental)
+│   ├── nb_02_silver.py        #   SCD2 + fact table + regime
+│   ├── nb_03_gold.py          #   metrics (LAG, RANK, rolling vol, per-regime)
+│   ├── nb_04_data_serving.py  #   export → Supabase (7 tables)
+│   └── nb_05_master.py        #   orchestration
+├── assets/                    # architecture & pipeline diagrams
 ├── requirements.txt
 ├── LICENSE
 └── README.md
@@ -238,16 +315,19 @@ The original challenge called for a BRL × commodities correlation via an extern
 
 ---
 
-## Next Steps
+## Roadmap
 
-- [ ] Visualization **dashboard** (Metabase) connected to Supabase
+- [x] **Historical window expanded** (30 days → 2015+) with pre/during/post-pandemic regimes
+- [x] **Visualization dashboard** (Metabase) connected to Supabase
+- [x] **Natural-language AI agent** (hybrid text-to-SQL + RAG) over the data mart
+- [ ] Deepen the agent's context & reasoning (richer corpus, conversational memory)
 - [ ] **Daily email notification** (GitHub Actions cron + Resend) reading from the data mart
-- [ ] **Expand the historical window** for more robust correlations
+- [ ] Persistent 24/7 hosting for the dashboards and agent
 
 ---
 
 ## Notes
 
-- Environment: **Databricks Free**
+- Environments: **Databricks Free** (pipeline) · **Docker** (Metabase) · **Streamlit Community Cloud** (agent)
 - Historical data: **Federal Reserve H.10** (official, public-domain source)
 - This is a **portfolio** project — the focus is on sound engineering practices, not artificial complexity
